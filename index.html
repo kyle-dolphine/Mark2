@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ENG Sightline & Stage Simulator Mark2 (12タブ対応版)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ==========================================================================
+       【最上層】上部固定ツールバー (z-index: 500)
+       ========================================================================== -->
+  <header id="top-toolbar">
+    <div class="toolbar-title">
+      <span>📐 会場図面 & ENG視界シミュレーター Mark2</span>
+    </div>
+    <div class="toolbar-actions">
+      <!-- 履歴操作 -->
+      <button class="ctrl-btn" id="btnUndo" title="元に戻す (Ctrl+Z)" onclick="undo()" disabled>↩️ 戻す</button>
+      <button class="ctrl-btn" id="btnRedo" title="やり直す (Ctrl+Y)" onclick="redo()" disabled>↪️ 進む</button>
+      <span class="toolbar-divider">|</span>
+      
+      <!-- ファイル・画像入出力 -->
+      <button class="btn-action" onclick="openSaveModal()">💾 名前をつけて保存</button>
+      <button class="btn-action" onclick="document.getElementById('importFile').click()">📂 開く</button>
+      <input type="file" id="importFile" accept=".json" style="display:none;" onchange="importJson(event)">
+      <button class="btn-action btn-primary" onclick="exportCanvasImage()">📸 画像出力 (.png)</button>
+      
+      <!-- パレット開閉 -->
+      <button class="btn-action" onclick="togglePalette()">🛠️ パレット開閉</button>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       【最上層】名前をつけて保存モーダル (z-index: 1000)
+       ========================================================================== -->
+  <div id="saveModal" onclick="closeSaveModal()">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-title">💾 名前をつけて保存</div>
+      <div class="input-box">
+        <label>ファイル名 (.json)</label>
+        <input type="text" id="modalFileName" value="Venue_Layout_Mark2.json">
+      </div>
+      <div class="modal-buttons">
+        <button class="btn-action" onclick="closeSaveModal()">キャンセル</button>
+        <button class="btn-action btn-primary" onclick="confirmSaveJson()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       【メイン作業領域】キャンバス & 中層HUD (z-index: 1〜100)
+       ========================================================================== -->
+  <main id="main-container">
+    <!-- 最下層：図面Canvas（中央固定・背景ドラッグ無効） -->
+    <canvas id="simCanvas"></canvas>
+
+    <!-- 中層：左上サマリー ＆ 意見ボード -->
+    <div class="hud-left-top">
+      <div class="info-card">
+        <div class="card-title">
+          <span>📊 図面サマリー</span>
+          <span id="viewModeBadge" class="badge-view">🗺️ 平面図</span>
+        </div>
+        <div class="stats-row"><span>会場外郭:</span><strong id="statRoom">--</strong></div>
+        <div class="stats-row"><span>ステージ:</span><strong id="statStage">--</strong></div>
+        <div class="stats-row"><span>客席数:</span><strong id="statSeats">--</strong></div>
+        <div class="stats-row text-success"><span>良好 (視界クリア):</span><strong id="statClear">0 席</strong></div>
+        <div class="stats-row text-warning"><span>視野干渉 (頭・機材被り):</span><strong id="statPartial">0 席</strong></div>
+      </div>
+      <div class="opinion-board">
+        <div class="card-title">💡 バランス診断・意見ボード</div>
+        <div id="opinionText" class="opinion-msg">診断中...</div>
+      </div>
+    </div>
+
+    <!-- 中層：中央上 立面図シークバー -->
+    <div id="side-scrollbar-container">
+      <label>↔ 立面断面スライス (X):</label>
+      <button class="scroll-step-btn" onclick="stepSlice(-1000)">◀ -1m</button>
+      <input type="range" id="side-scroll-range" min="0" max="20000" value="8600" step="100" oninput="onSideSliceChange(this.value)">
+      <button class="scroll-step-btn" onclick="stepSlice(1000)">+1m ▶</button>
+      <span id="sideScrollValDisplay" class="slice-val">8.6m</span>
+    </div>
+
+    <!-- 中層：右上 コントロールバー（2段パネル構成・ズームボタン等） -->
+    <div class="top-right-controls">
+      <!-- 1段目：視点切り替え・拡大縮小・表示トグル -->
+      <div class="control-panel">
+        <button class="view-btn active" id="btn-top" onclick="setViewMode('top')">🗺️ 平面図</button>
+        <button class="view-btn" id="btn-side" onclick="setViewMode('side')">📐 立面図</button>
+        <span class="panel-divider">|</span>
+        
+        <!-- 拡大・縮小コントロール群 -->
+        <button class="ctrl-btn" title="縮小" onclick="adjustZoom(0.8)">－</button>
+        <span class="zoom-badge" id="zoomBadge">100%</span>
+        <button class="ctrl-btn" title="拡大" onclick="adjustZoom(1.25)">＋</button>
+        <button class="ctrl-btn" title="等倍" onclick="setZoom100()">100%</button>
+        <button class="ctrl-btn" title="画面中央に配置" onclick="resetView()">中央</button>
+        <span class="panel-divider">|</span>
+        
+        <!-- 表示トグル -->
+        <button class="ctrl-btn active" id="btn-fov" onclick="toggleFov()">👁️ 視野角</button>
+      </div>
+    </div>
+
+    <!-- 中層：左下 凡例 -->
+    <div class="legend">
+      <div class="legend-item"><div class="legend-symbol sym-stage"></div><span>ステージ</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-panel"></div><span>パネル</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-guest"></div><span>登壇者</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-monitor"></div><span>モニター</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-podium"></div><span>司会台</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-cam"></div><span>CAM</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-seat-ok"></div><span>客席(良好)</span></div>
+      <div class="legend-item"><div class="legend-symbol sym-seat-warn"></div><span>客席(干渉)</span></div>
+    </div>
+  </main>
+
+  <!-- ==========================================================================
+       【最上層】フローティング操作パレット (z-index: 600)
+       ※全12タブの文字＋絵文字を完備、スクロールなし4×3列配置用
+       ========================================================================== -->
+  <div id="floating-ui">
+    <div id="floating-header" onclick="togglePalette()">
+      <span>🛠️ 図面パラメータ設定</span>
+      <span id="palette-arrow">▼</span>
+    </div>
+
+    <div id="floating-body">
+      <!-- 全12タブ切り替えバー -->
+      <div class="tab-bar">
+        <button class="tab-btn active" id="tabbtn-room" onclick="switchTab('room')">🏛 会場</button>
+        <button class="tab-btn" id="tabbtn-facility" onclick="switchTab('facility')">🏢 会場設備</button>
+        <button class="tab-btn" id="tabbtn-podium" onclick="switchTab('podium')">🎤 司会台</button>
+        <button class="tab-btn" id="tabbtn-guests" onclick="switchTab('guests')">👤 登壇者</button>
+        <button class="tab-btn" id="tabbtn-stage_items" onclick="switchTab('stage_items')">🪑 舞台什器</button>
+        <button class="tab-btn" id="tabbtn-seats" onclick="switchTab('seats')">👥 客席</button>
+        <button class="tab-btn" id="tabbtn-camera" onclick="switchTab('camera')">🎥 カメラ</button>
+        <button class="tab-btn" id="tabbtn-display" onclick="switchTab('display')">👁️ 表示設定</button>
+        <button class="tab-btn" id="tabbtn-equipment" onclick="switchTab('equipment')">🎛️ 機材備品</button>
+        <button class="tab-btn" id="tabbtn-monitor" onclick="switchTab('monitor')">📺 モニター</button>
+        <button class="tab-btn" id="tabbtn-bgimage" onclick="switchTab('bgimage')">🖼️ 図面挿入</button>
+        <button class="tab-btn" id="tabbtn-ai_gen" onclick="switchTab('ai_gen')">🤖 AI生成</button>
+      </div>
+
+      <!-- 操作パネル内：タブコンテンツ受け皿群 -->
+      <div class="tab-content" id="tab-content-container">
+        <!-- 各ノートの担当JSからHTMLが挿入されるか、各JSの初期化で動的バインドされます -->
+        <div class="tab-panel active" id="panel-room"></div>
+        <div class="tab-panel" id="panel-facility"></div>
+        <div class="tab-panel" id="panel-podium"></div>
+        <div class="tab-panel" id="panel-guests"></div>
+        <div class="tab-panel" id="panel-stage_items"></div>
+        <div class="tab-panel" id="panel-seats"></div>
+        <div class="tab-panel" id="panel-camera"></div>
+        <div class="tab-panel" id="panel-display"></div>
+        <div class="tab-panel" id="panel-equipment"></div>
+        <div class="tab-panel" id="panel-monitor"></div>
+        <div class="tab-panel" id="panel-bgimage"></div>
+        <div class="tab-panel" id="panel-ai_gen"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       スクリプト読み込み口 (読み込み順序ルールを厳守)
+       ① コアエンジン (共通基盤) -> ② 各モジュール (ノート1〜12)
+       ========================================================================== -->
+  <script src="core_engine.js"></script>
+
+  <!-- 各ノートモジュール (これらが存在しなくてもエラーにはなりません) -->
+  <script src="tab1_room.js"></script>
+  <script src="tab2_facility.js"></script>
+  <script src="tab3_podium.js"></script>
+  <script src="tab4_guests.js"></script>
+  <script src="tab5_stage_items.js"></script>
+  <script src="tab6_seats.js"></script>
+  <script src="tab7_camera.js"></script>
+  <script src="tab8_display.js"></script>
+  <script src="tab9_equipment.js"></script>
+  <script src="tab10_monitor.js"></script>
+  <script src="tab11_bgimage.js"></script>
+  <script src="tab12_ai_gen.js"></script>
+
+</body>
+</html>
